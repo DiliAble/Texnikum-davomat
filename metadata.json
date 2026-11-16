@@ -1,0 +1,6 @@
+{
+  "name": "Texnikum Davomat — Face & GPS Nazorat",
+  "description": "Talabalar davomatini brauzerda yuzni tanish (face-api.js), avtomatik GPS, Device Lock, Firebase va Google Sheets / Excel (.xlsx) orqali 100% bepul nazorat qilish tizimi.",
+  "requestFramePermissions": ["camera", "geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

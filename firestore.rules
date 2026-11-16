@@ -1,0 +1,175 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: deny everything by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrapAdmin() {
+      return isVerified() && request.auth.token.email == 'diliable004@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrapAdmin() || (
+        isVerified() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidStudent(data) {
+      return data.keys().hasAll(['fullName', 'groupName', 'login', 'passwordHash', 'ownerUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['fullName', 'groupName', 'login', 'passwordHash', 'photoUrl', 'deviceId', 'ownerUid', 'createdAt', 'updatedAt'])
+        && data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 120
+        && data.groupName is string && data.groupName.size() >= 1 && data.groupName.size() <= 40
+        && data.login is string && data.login.size() >= 3 && data.login.size() <= 40 && data.login.matches('^[a-zA-Z0-9_.-]+$')
+        && data.passwordHash is string && data.passwordHash.size() >= 8 && data.passwordHash.size() <= 128
+        && data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128
+        && (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 500000))
+        && (!('deviceId' in data) || (data.deviceId is string && data.deviceId.size() <= 128))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAttendanceRecord(data) {
+      return data.keys().hasAll(['studentId', 'studentName', 'groupName', 'dateStr', 'timeStr', 'status', 'distanceMeters', 'faceScore', 'deviceId', 'ownerUid', 'createdAt'])
+        && data.keys().hasOnly(['studentId', 'studentName', 'groupName', 'dateStr', 'timeStr', 'status', 'distanceMeters', 'faceScore', 'deviceId', 'lat', 'lng', 'syncedToSheets', 'ownerUid', 'createdAt'])
+        && isValidId(data.studentId)
+        && data.studentName is string && data.studentName.size() >= 2 && data.studentName.size() <= 120
+        && data.groupName is string && data.groupName.size() >= 1 && data.groupName.size() <= 40
+        && data.dateStr is string && data.dateStr.size() == 10
+        && data.timeStr is string && data.timeStr.size() >= 5 && data.timeStr.size() <= 8
+        && data.status is string && data.status.size() <= 32 && data.status in ['Bor', 'Kechikdi', 'Hududdan tashqari', "Yo'q"]
+        && data.distanceMeters is number && data.distanceMeters >= 0 && data.distanceMeters <= 20000000
+        && data.faceScore is number && data.faceScore >= 0 && data.faceScore <= 100
+        && data.deviceId is string && data.deviceId.size() >= 4 && data.deviceId.size() <= 128
+        && data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128
+        && (!('lat' in data) || (data.lat is number && data.lat >= -90 && data.lat <= 90))
+        && (!('lng' in data) || (data.lng is number && data.lng >= -180 && data.lng <= 180))
+        && (!('syncedToSheets' in data) || data.syncedToSheets is bool)
+        && data.createdAt is timestamp;
+    }
+
+    function isValidCampusSettings(data) {
+      return data.keys().hasAll(['campusName', 'lat', 'lng', 'allowedRadiusMeters', 'lateAfterTime', 'ownerUid', 'updatedAt'])
+        && data.keys().hasOnly(['campusName', 'lat', 'lng', 'allowedRadiusMeters', 'lateAfterTime', 'googleSheetsWebhookUrl', 'ownerUid', 'updatedAt'])
+        && data.campusName is string && data.campusName.size() >= 2 && data.campusName.size() <= 120
+        && data.lat is number && data.lat >= -90 && data.lat <= 90
+        && data.lng is number && data.lng >= -180 && data.lng <= 180
+        && data.allowedRadiusMeters is number && data.allowedRadiusMeters >= 10 && data.allowedRadiusMeters <= 50000
+        && data.lateAfterTime is string && data.lateAfterTime.size() == 5
+        && data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128
+        && (!('googleSheetsWebhookUrl' in data) || (data.googleSheetsWebhookUrl is string && data.googleSheetsWebhookUrl.size() <= 500))
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAdminUser(data) {
+      return data.keys().hasAll(['email', 'role', 'createdAt'])
+        && data.keys().hasOnly(['email', 'role', 'createdAt'])
+        && data.email is string && data.email.size() >= 5 && data.email.size() <= 160
+        && data.role is string && data.role.size() <= 20 && data.role in ['admin', 'teacher']
+        && data.createdAt is timestamp;
+    }
+
+    match /students/{studentId} {
+      allow get: if isValidId(studentId) && isAdmin();
+      allow list: if isVerified() && (resource.data.ownerUid == request.auth.uid || request.auth.token.email == 'diliable004@gmail.com');
+      allow create: if isValidId(studentId)
+        && isVerified()
+        && isValidStudent(incoming())
+        && incoming().ownerUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isAdmin();
+      allow update: if isValidId(studentId)
+        && isVerified()
+        && isValidStudent(incoming())
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && isAdmin()
+        && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['deviceId', 'updatedAt']) ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'groupName', 'login', 'passwordHash', 'photoUrl', 'deviceId', 'updatedAt'])
+        );
+      allow delete: if isValidId(studentId) && isAdmin();
+    }
+
+    match /attendance/{recordId} {
+      allow get: if isValidId(recordId) && isAdmin();
+      allow list: if isVerified() && (resource.data.ownerUid == request.auth.uid || request.auth.token.email == 'diliable004@gmail.com');
+      allow create: if isValidId(recordId)
+        && isVerified()
+        && isValidAttendanceRecord(incoming())
+        && incoming().ownerUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && isAdmin()
+        && exists(/databases/$(database)/documents/students/$(incoming().studentId));
+      allow update: if isValidId(recordId)
+        && isVerified()
+        && isValidAttendanceRecord(incoming())
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().studentId == existing().studentId
+        && incoming().createdAt == existing().createdAt
+        && isAdmin()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'syncedToSheets']);
+      allow delete: if isValidId(recordId) && isAdmin();
+    }
+
+    match /settings/{settingId} {
+      allow get: if isValidId(settingId) && isAdmin();
+      allow list: if isVerified() && (resource.data.ownerUid == request.auth.uid || request.auth.token.email == 'diliable004@gmail.com');
+      allow create: if isValidId(settingId)
+        && isVerified()
+        && isValidCampusSettings(incoming())
+        && incoming().ownerUid == request.auth.uid
+        && incoming().updatedAt == request.time
+        && isAdmin();
+      allow update: if isValidId(settingId)
+        && isVerified()
+        && isValidCampusSettings(incoming())
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().updatedAt == request.time
+        && isAdmin()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['campusName', 'lat', 'lng', 'allowedRadiusMeters', 'lateAfterTime', 'googleSheetsWebhookUrl', 'updatedAt']);
+      allow delete: if isValidId(settingId) && isAdmin();
+    }
+
+    match /admins/{adminUid} {
+      allow get: if isValidId(adminUid) && isVerified() && (request.auth.uid == adminUid || isBootstrapAdmin());
+      allow list: if isVerified() && request.auth.token.email == 'diliable004@gmail.com';
+      allow create: if isValidId(adminUid)
+        && isBootstrapAdmin()
+        && isValidAdminUser(incoming())
+        && incoming().createdAt == request.time;
+      allow update: if isValidId(adminUid)
+        && isBootstrapAdmin()
+        && isValidAdminUser(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['role']);
+      allow delete: if isValidId(adminUid) && isBootstrapAdmin();
+    }
+  }
+}
